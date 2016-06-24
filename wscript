@@ -1,322 +1,200 @@
-import subprocess
-from waflib.Tools.compiler_cxx import cxx_compiler
-from waflib.Tools.compiler_c import c_compiler
-cxx_compiler['linux'] = ['clang++']
-c_compiler['linux'] = ['clang']
-
-import sys
 import os
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
+import StringIO
 from waflib.extras import clang_compilation_database
 from waflib import Utils
 
 top = '.'
 out = 'wbuild'
-APP_NAME = 'clasp'
+APPNAME = 'clasp'
 VERSION = '0.0'
-DARWIN_OS = 'darwin'
-LINUX_OS = 'linux'
-    
-STAGE_CHARS = [ 's', 'i', 'a', 'b', 'c' ]
 
-GCS = [ 'boehm',
-        'boehmdc',
-        'mpsprep',
-        'mps' ]
-DEBUG_CHARS = [ 'o', 'd' ]
 
-LLVM_LIBRARIES = []
+VARIANTS = [ 'boehm_o',
+             'boehm_d',
+             'boehmdc_o',
+             'boehmdc_d',
+             'mpsprep_o',
+             'mpsprep_d',
+             'mps_o',
+             'mps_d' ]
 
-CLANG_LIBRARIES = [
-            'clangASTMatchers',
-            'clangDynamicASTMatchers',
-            'clangIndex',
-            'clangTooling',
-            'clangFormat',
-            'clangToolingCore',
-            'clangBasic',
-            'clangCodeGen',
-            'clangDriver',
-            'clangFrontend',
-            'clangFrontendTool',
-            'clangCodeGen',
-            'clangRewriteFrontend',
-            'clangARCMigrate',
-            'clangStaticAnalyzerFrontend',
-            'clangFrontend',
-            'clangDriver',
-            'clangParse',
-            'clangSerialization',
-            'clangSema',
-            'clangEdit',
-            'clangStaticAnalyzerCheckers',
-            'clangStaticAnalyzerCore',
-            'clangAnalysis',
-            'clangAST',
-            'clangRewrite',
-            'clangLex',
-            'clangBasic',
- ]
-
-BOOST_LIBRARIES = [
-            'boost_filesystem',
-            'boost_regex',
-            'boost_date_time',
-            'boost_program_options',
-            'boost_system',
-            'boost_iostreams']
-
-def libraries_as_link_flags(fmt,libs):
-    all_libs = StringIO()
-    for x in libs:
-        all_libs.write(" ")
-        all_libs.write(fmt % x)
-    return all_libs.getvalue()
-    
-def stage_value(ctx,s):
-    if ( s == 's' ):
-        sval = -1
-    elif ( s == 'i' ):
-        sval = 0
-    elif ( s == 'a' ):
-        sval = 1
-    elif ( s == 'b' ):
-        sval = 2
-    elif ( s == 'c' ):
-        sval = 3
-    else:
-        ctx.fatal("Illegal stage: %s" % s)
-    return sval
+class variant():
+    stage = 0
+    def common_setup(self,cfg):
+        cfg.env.append_value('LINKFLAGS', '-Wl,-object_path_lto,%s.lto.o' % self.executable_name)
 
 def configure_clasp(cfg,variant):
-    include_path = "%s/%s/%s/src/include/clasp/main/" % (cfg.path.abspath(),out,variant.variant_dir()) #__class__.__name__)
-#    print("Including from %s" % include_path )
+    include_path = "%s/%s/%s/src/include/clasp/main/" % (cfg.path.abspath(),out,variant.variant_dir) #__class__.__name__)
+    print("Including from %s" % include_path )
     cfg.env.append_value("CXXFLAGS", ['-I%s' % include_path])
-    cfg.define("EXECUTABLE_NAME",variant.executable_name())
-    cfg.define("APP_NAME",APP_NAME)
-    cfg.define("BITCODE_NAME",variant.bitcode_name())
-    cfg.define("VARIANT_NAME",variant.variant_name())
-    cfg.define("BUILD_STLIB", libraries_as_link_flags(cfg.env.STLIB_ST,cfg.env.STLIB))
-    cfg.define("BUILD_LIB", libraries_as_link_flags(cfg.env.LIB_ST,cfg.env.LIB))
-    cfg.define("BUILD_LINKFLAGS", ' '.join(cfg.env.LINKFLAGS))
+    cfg.define("EXECUTABLE_NAME",variant.executable_name)
+    cfg.define("BITCODE_NAME",variant.bitcode_name)
+    cfg.define("VARIANT_NAME",variant.variant_name)
 
-def strip_libs(libs):
-    result = []
-    split_libs = libs.split()
-    for lib in split_libs:
-        result.append("%s" % str(lib[2:]))
-    return result 
-    
-class variant(object):
-    def executable_name(self,stage=None):
-        if ( stage == None ):
-            use_stage = self.stage_char
-        else:
-            use_stage = stage
-        if (not (use_stage>='a' and use_stage <= 'z')):
-            raise Exception("Bad stage: %s"% use_stage)
-        return '%s%s-%s-%s' % (use_stage,APP_NAME,self.gc_name,self.debug_char)
-    def common_lisp_bitcode_name(self,stage=None):
-        if ( stage == None ):
-            use_stage = self.stage_char
-        else:
-            use_stage = stage
-        if (not (use_stage>='a' and use_stage <= 'z')):
-            raise Exception("Bad stage: %s"% use_stage)
-        return '%s%s-%s-common-lisp.bc' % (use_stage,APP_NAME,self.gc_name)
-    def variant_dir(self):
-        return "%s_%s"%(self.gc_name,self.debug_char)
-    def variant_name(self):
-        return self.gc_name
-    def bitcode_name(self):
-        return "%s-%s" % (self.gc_name,self.debug_char)
-    def configure_for_release(self,cfg):
+class boehm_o(variant):
+    variant_dir = 'boehm_o'
+    variant_name = 'boehm'
+    bitcode_name = '%s-o' % variant_name
+    executable_name = 'i%s-o' % variant_name
+    def configure(self,cfg,env_copy):
+        cfg.setenv(self.variant_dir, env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_BOEHM",1)
         cfg.define("_RELEASE_BUILD",1)
         cfg.env.append_value('CXXFLAGS', [ '-O3', '-g' ])
         cfg.env.append_value('CFLAGS', [ '-O3', '-g' ])
-        if (os.getenv("CLASP_RELEASE_CXXFLAGS") != None):
-            cfg.env.append_value('CXXFLAGS', os.getenv("CLASP_RELEASE_CXXFLAGS").split() )
-        if (os.getenv("CLASP_RELEASE_LINKFLAGS") != None):
-            cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_RELEASE_LINKFLAGS").split())
-    def configure_for_debug(self,cfg):
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_RELEASE_LINKFLAGS").split())
+        cfg.env.append_value('LINKFLAGS', ['-lgc'])
+        cfg.env.append_value('LINKFLAGS', ['-lgmp'])
+        self.common_setup(cfg)
+        cfg.write_config_header('%s/config.h'%self.variant_dir, remove=True)
+    def install(self):
+        return self.executable_name
+
+class boehm_d(variant):
+    variant_dir = 'boehm_d'
+    variant_name = 'boehm'
+    bitcode_name = '%s-d' % variant_name
+    executable_name = 'i%s-d' % variant_name
+    def configure(self,cfg,env_copy):
+        cfg.setenv("boehm_d", env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_BOEHM",1)
         cfg.define("_DEBUG_BUILD",1)
         cfg.env.append_value('CXXFLAGS', [ '-O0', '-g' ])
         cfg.env.append_value('CFLAGS', [ '-O0', '-g' ])
-        if (os.getenv("CLASP_DEBUG_CXXFLAGS") != None):
-            cfg.env.append_value('CXXFLAGS', os.getenv("CLASP_DEBUG_CXXFLAGS").split() )
-        print("CLASP_DEBUG_LINKFLAGS = %s" % os.getenv("CLASP_DEBUG_LINKFLAGS"))
-        if (os.getenv("CLASP_DEBUG_LINKFLAGS") != None):
-            cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_DEBUG_LINKFLAGS").split())
-    def common_setup(self,cfg):
-        if ( self.debug_char == 'r' ):
-            self.configure_for_release(cfg)
-        else:
-            self.configure_for_debug(cfg)
-        configure_clasp(cfg,self)
-        cfg.write_config_header("%s/config.h"%self.variant_dir(),remove=True)
-
-class boehm(variant):
-    def configure_variant(self,cfg,env_copy):
-        cfg.define("USE_BOEHM",1)
-        if (cfg.env['DEST_OS'] == DARWIN_OS ):
-            cfg.env.append_value('LINKFLAGS', '-Wl,-object_path_lto,%s.lto.o' % self.executable_name())
-        print("Setting up boehm library cfg.env.STLIB_BOEHM = %s " % cfg.env.STLIB_BOEHM)
-        print("Setting up boehm library cfg.env.LIB_BOEHM = %s" % cfg.env.LIB_BOEHM)
-        if (cfg.env.LIB_BOEHM == [] ):
-            cfg.env.append_value('STLIB',cfg.env.STLIB_BOEHM)
-        else:
-            cfg.env.append_value('LIB',cfg.env.LIB_BOEHM)
-        self.common_setup(cfg)        
-    
-class boehm_o(boehm):
-    gc_name = 'boehm'
-    debug_char = 'o'
-    def configure_variant(self,cfg,env_copy):
-        cfg.setenv(self.variant_dir(), env=env_copy.derive())
-        super(boehm_o,self).configure_variant(cfg,env_copy)
-
-class boehm_d(boehm):
-    gc_name = 'boehm'
-    debug_char = 'd'
-    def configure_variant(self,cfg,env_copy):
-        cfg.setenv("boehm_d", env=env_copy.derive())
-        super(boehm_d,self).configure_variant(cfg,env_copy)
-
-class boehmdc_o(boehm):
-    gc_name = 'boehmdc'
-    debug_char = 'o'
-    def configure_variant(self,cfg,env_copy):
-        cfg.setenv("boehmdc_o", env=env_copy.derive())
-        cfg.define("USE_CXX_DYNAMIC_CAST",1)
-        super(boehmdc_o,self).configure_variant(cfg,env_copy)
-
-class boehmdc_d(boehm):
-    gc_name = 'boehmdc'
-    debug_char = 'd'
-    def configure_variant(self,cfg,env_copy):
-        cfg.setenv("boehmdc_d", env=env_copy.derive())
-        cfg.define("USE_CXX_DYNAMIC_CAST",1)
-        super(boehmdc_d,self).configure_variant(cfg,env_copy)
-
-class mps(variant):
-    def configure_variant(self,cfg,env_copy):
-        cfg.define("USE_MPS",1)
+        cfg.env.append_value('LINKFLAGS', ['-lgc'])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_DEBUG_LINKFLAGS").split())
         self.common_setup(cfg)
-        
-class mpsprep_o(mps):
-    gc_name = 'mpsprep'
-    debug_char = 'o'
-    def configure_variant(self,cfg,env_copy):
+        cfg.write_config_header('boehm_d/config.h', remove=True)
+    def install(self):
+        return self.executable_name
+
+class boehmdc_o(variant):
+    variant_dir = 'boehmdc_o'
+    variant_name = 'boehmdc'
+    bitcode_name = '%s-o' % variant_name
+    executable_name = 'i%s-o' % variant_name
+    def configure(self,cfg,env_copy):
+        cfg.setenv("boehmdc_o", env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_BOEHM",1)
+        cfg.define("USE_CXX_DYNAMIC_CAST",1)
+        cfg.define("_RELEASE_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O3', '-g' ])
+        cfg.env.append_value('CFLAGS', [ '-O3', '-g' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_RELEASE_LINKFLAGS").split())
+        cfg.env.append_value('LINKFLAGS', ['-lgc'])
+        cfg.env.append_value('LINKFLAGS', ['-lgmp'])
+        self.common_setup(cfg)
+        cfg.write_config_header('boehmdc_o/config.h', remove=True)
+    def install(self):
+        return self.executable_name
+
+class boehmdc_d(variant):
+    variant_dir = 'boehmdc_d'
+    variant_name = 'boehmdc'
+    bitcode_name = '%s-d' % variant_name
+    executable_name = 'i%s-d' % variant_name
+    def configure(self,cfg,env_copy):
+        cfg.setenv("boehmdc_d", env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_BOEHM",1)
+        cfg.define("USE_CXX_DYNAMIC_CAST",1)
+        cfg.define("_DEBUG_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('CFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_DEBUG_LINKFLAGS").split())
+        cfg.env.append_value('LINKFLAGS', ['-lgc'])
+        self.common_setup(cfg)
+        cfg.write_config_header('boehmdc_d/config.h', remove=True)
+    def install(self):
+        return self.executable_name
+
+class mpsprep_o(variant):
+    variant_dir = 'mpsprep_o'
+    variant_name = 'mpsprep'
+    bitcode_name = '%s-o' % variant_name
+    executable_name = 'i%s-o' % variant_name
+    def configure(self,cfg,env_copy):
         cfg.setenv("mpsprep_o", env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_MPS",1)
         cfg.define("RUNNING_GC_BUILDER",1)
-        super(mpsprep_o,self).configure_variant(cfg,env_copy)
-        
-class mpsprep_d(mps):
-    gc_name = 'mpsprep'
-    debug_char = 'd'
-    def configure_variant(self,cfg,env_copy):
+        cfg.define("_RELEASE_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O3' ])
+        cfg.env.append_value('CFLAGS', [ '-O3' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_RELEASE_LINKFLAGS").split())
+        self.common_setup(cfg)
+        cfg.write_config_header('mpsprep_o/config.h', remove=True)
+    def install(self):
+        return self.executable_name
+
+class mpsprep_d(variant):
+    variant_dir = 'mpsprep_d'
+    variant_name = 'mpsprep'
+    bitcode_name = '%s-d' % variant_name
+    executable_name = 'i%s-d' % variant_name
+    def configure(self,cfg,env_copy):
         cfg.setenv("mpsprep_d", env=env_copy.derive())
+        configure_clasp(cfg,self)
+        cfg.define("USE_MPS",1)
         cfg.define("RUNNING_GC_BUILDER",1)
-        super(mpsprep_d,self).configure_variant(cfg,env_copy)
+        cfg.define("_DEBUG_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('CFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_DEBUG_LINKFLAGS").split())
+        self.common_setup(cfg)
+        cfg.write_config_header('mpsprep_d/config.h', remove=True)
+    def install(self):
+        return self.executable_name
 
-class mps_o(mps):
-    gc_name = 'mps'
-    debug_char = 'o'
-    def configure_variant(self,cfg,env_copy):
+class mps_o(variant):
+    variant_dir = 'mps_o'
+    variant_name = 'mps'
+    bitcode_name = '%s-o' % variant_name
+    executable_name = 'i%s-o' % variant_name
+    def configure(self,cfg,env_copy):
         cfg.setenv("mps_o", env=env_copy.derive())
-        super(mps_o,self).configure_variant(cfg,env_copy)
+        configure_clasp(cfg,self)
+        cfg.define("USE_MPS",1)
+        cfg.define("_RELEASE_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O3' ])
+        cfg.env.append_value('CFLAGS', [ '-O3' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_RELEASE_LINKFLAGS").split())
+        self.common_setup(cfg)
+        cfg.write_config_header('mps_o/config.h', remove=True)
+    def install(self):
+        return self.executable_name
 
-class mps_d(mps):
-    gc_name = 'mps'
-    debug_char = 'd'
-    def configure_variant(self,cfg,env_copy):
+
+class mps_d(variant):
+    variant_dir = 'mps_d'
+    variant_name = 'mps'
+    bitcode_name = '%s-d' % variant_name
+    executable_name = 'i%s-d' % variant_name
+    def configure(self,cfg,env_copy):
         cfg.setenv("mps_d", env=env_copy.derive())
-        super(mps_d,self).configure_variant(cfg,env_copy)
+        configure_clasp(cfg,self)
+        cfg.define("USE_MPS",1)
+        cfg.define("_DEBUG_BUILD",1)
+        cfg.env.append_value('CXXFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('CFLAGS', [ '-O0', '-g' ])
+        cfg.env.append_value('LINKFLAGS', os.getenv("CLASP_DEBUG_LINKFLAGS").split())
+        self.common_setup(cfg)
+        cfg.write_config_header('mps_d/config.h', remove=True)
+    def install(self):
+        return self.executable_name
 
-class iboehm_o(boehm_o):
-    stage_char = 'i'
-class aboehm_o(boehm_o):
-    stage_char = 'a'
-class bboehm_o(boehm_o):
-    stage_char = 'b'
-class cboehm_o(boehm_o):
-    stage_char = 'c'
-    
-class iboehm_d(boehm_d):
-    stage_char = 'i'
-class aboehm_d(boehm_d):
-    stage_char = 'a'
-class bboehm_d(boehm_d):
-    stage_char = 'b'
-class cboehm_d(boehm_d):
-    stage_char = 'c'
-
-class iboehmdc_o(boehmdc_o):
-    stage_char = 'i'
-class aboehmdc_o(boehmdc_o):
-    stage_char = 'a'
-class bboehmdc_o(boehmdc_o):
-    stage_char = 'b'
-class cboehmdc_o(boehmdc_o):
-    stage_char = 'c'
-
-class iboehmdc_d(boehmdc_d):
-    stage_char = 'i'
-class aboehmdc_d(boehmdc_d):
-    stage_char = 'a'
-class bboehmdc_d(boehmdc_d):
-    stage_char = 'b'
-class cboehmdc_d(boehmdc_d):
-    stage_char = 'c'
-
-
-class imps_o(mps_o):
-    stage_char = 'i'
-class amps_o(mps_o):
-    stage_char = 'a'
-class bmps_o(mps_o):
-    stage_char = 'b'
-class cmps_o(mps_o):
-    stage_char = 'c'
-    
-class imps_d(mps_d):
-    stage_char = 'i'
-class amps_d(mps_d):
-    stage_char = 'a'
-class bmps_d(mps_d):
-    stage_char = 'b'
-class cmps_d(mps_d):
-    stage_char = 'c'
-
-class impsprep_o(mpsprep_o):
-    stage_char = 'i'
-class ampsprep_o(mpsprep_o):
-    stage_char = 'a'
-class bmpsprep_o(mpsprep_o):
-    stage_char = 'b'
-class cmpsprep_o(mpsprep_o):
-    stage_char = 'c'
-
-class impsprep_d(mpsprep_d):
-    stage_char = 'i'
-class ampsprep_d(mpsprep_d):
-    stage_char = 'a'
-class bmpsprep_d(mpsprep_d):
-    stage_char = 'b'
-class cmpsprep_d(mpsprep_d):
-    stage_char = 'c'
-    
 import subprocess
 
 def lisp_source_files(exe,stage):
     print("About to execute: %s" % exe)
-    proc = subprocess.Popen([exe, "-I", "-f", "ecl-min", "-e", "(source-files-%s)"%stage_name(stage), "-e", "(quit)"], stdout=subprocess.PIPE, shell=True)
+    proc = subprocess.Popen([exe, "-I", "-f", "ecl-min", "-e", "(source-files-%s)"%stage, "-e", "(quit)"], stdout=subprocess.PIPE, shell=True)
     (out, err) = proc.communicate()
-    print( "source-files-%s: %s" % (stage_name(stage),out))
+    print( "source-files-%s: %s" % (stage,out))
     return out
+
 
 def options(opt):
     opt.load('compiler_cxx')
@@ -325,8 +203,8 @@ def options(opt):
 
 
 def build_plugin_headers(root,headers_list):
-#    print("DEBUG build_plugin_headers directory = %s\n" % root )
-#    print("DEBUG build_plugin_headers headers_list=%s\n"% headers_list)
+    print("DEBUG build_plugin_headers directory = %s\n" % root )
+    print("DEBUG build_plugin_headers headers_list=%s\n"% headers_list)
     if not os.path.exists(os.path.dirname("%s/generated/"%root)):
         os.makedirs(os.path.dirname("%s/generated/"%root))
     fout = open("%s/generated/plugin_headers.h"%root,"w")
@@ -335,65 +213,28 @@ def build_plugin_headers(root,headers_list):
         fout.write("#include <%s>\n" % x)
     fout.close()
 
-def options(cfg):
-    cfg.load('compiler_cxx')
-    cfg.load('compiler_c')
-    cfg.add_option('--externals_clasp_dir', action='store', default=False, help='Path to externals-clasp')
-
 def configure(cfg):
-    global LLVM_LIBRARIES
     cfg.check_waf_version(mini='1.7.5')
-    llvm_config = cfg.find_program("llvm-config",var="LLVM_CONFIG")
-#    print("llvm_config = %s" % llvm_config[0])
-    llvm_libs_bytes = subprocess.Popen([llvm_config[0], "--libs"], stdout=subprocess.PIPE).communicate()[0]
-    LLVM_LIBRARIES = strip_libs(llvm_libs_bytes.decode("ASCII",'ignore'))
-#    print("llvm_libs = %s" % llvm_libs)
     cfg.load('compiler_cxx')
     cfg.load('compiler_c')
-### Uncommenting these checks causes problems-- AttributeError: 'BuildContext' object has no attribute 'variant_obj'
-    cfg.plugins_include_dirs = []
-    cfg.plugins_gcinterface_include_files = []
-    cfg.plugins_stlib = []
-    cfg.plugins_lib = []
+    cfg.plugins_includes = []
+    cfg.plugins_headers = []
     cfg.recurse('plugins')
-    cfg.check_cxx(lib='gmpxx gmp'.split(), cflags='-Wall', uselib_store='GMP')
-    try:
-        cfg.check_cxx(stlib='gc', cflags='-Wall', uselib_store='BOEHM')
-    except:
-        cfg.check_cxx(lib='gc', cflags='-Wall', uselib_store='BOEHM')
-    cfg.check_cxx(stlib='z', cflags='-Wall', uselib_store='Z')
-    if (cfg.env['DEST_OS'] == LINUX_OS ):
-        cfg.check_cxx(lib='dl', cflags='-Wall', uselib_store='DL')
-    cfg.check_cxx(lib='ncurses', cflags='-Wall', uselib_store='NCURSES')
-    cfg.check_cxx(lib='m', cflags='-Wall', uselib_store='M')
-    cfg.check_cxx(stlib=BOOST_LIBRARIES, cflags='-Wall', uselib_store='BOOST')
-    print("externals_clasp_dir = %s" % cfg.options.externals_clasp_dir)
-    if ( cfg.options.externals_clasp_dir != False ):
-        clasp_release_llvm_lib_dir = "%s/build/release/lib/"%cfg.options.externals_clasp_dir
-        cfg.env.append_value('LINKFLAGS', "-L%s" % clasp_release_llvm_lib_dir )
-        cfg.check_cxx(stlib=LLVM_LIBRARIES, cflags='-Wall', uselib_store='LLVM', stlibpath = clasp_release_llvm_lib_dir )
-        cfg.check_cxx(stlib=CLANG_LIBRARIES, cflags='-Wall', uselib_store='CLANG', stlibpath = clasp_release_llvm_lib_dir )
-    else:    
-        cfg.check_cxx(stlib=LLVM_LIBRARIES, cflags='-Wall', uselib_store='LLVM')
-        cfg.check_cxx(stlib=CLANG_LIBRARIES, cflags='-Wall', uselib_store='CLANG')
-#    print("DEBUG cfg.plugins_includes = %s" % cfg.plugins_includes)
+    print("cfg.__dict__.keys() = %s\n" % cfg.__dict__.keys())
+    print("DEBUG cfg.plugins_includes = %s" % cfg.plugins_includes)
+    print("DEBUG cfg.plugins_headers = %s" % cfg.plugins_headers)
     cfg.env.append_value('CXXFLAGS', ['-I./'])
     if ('program_name' in cfg.__dict__):
         pass
     else:
-        cfg.env.append_value('CXXFLAGS', ['-I%s/include/clasp/main/'% cfg.path.abspath() ])
+        cfg.env.append_value('CXXFLAGS', ['-I%s/include/clasp/main/'% (os.getenv("CLASP_HOME"))] )
+
 # Check if GC_enumerate_reachable_objects_inner is available
 # If so define  BOEHM_GC_ENUMERATE_REACHABLE_OBJECTS_INNER_AVAILABLE
 #
     cfg.define("USE_CLASP_DYNAMIC_CAST",1)
     cfg.define("BUILDING_CLASP",1)
-    print("cfg.env['DEST_OS'] == %s\n" % cfg.env['DEST_OS'])
-    if (cfg.env['DEST_OS'] == DARWIN_OS ):
-        cfg.define("_TARGET_OS_DARWIN",1)
-    elif (cfg.env['DEST_OS'] == LINUX_OS ):
-        cfg.define("_TARGET_OS_LINUX",1);
-    else:
-        raise Exception("Unknown OS %s"%cfg.env['DEST_OS'])
+    cfg.define("_TARGET_OS_DARWIN",1)
     cfg.define("PROGRAM_CLASP",1)
     cfg.define("CLASP_GIT_COMMIT","ecf5585")
     cfg.define("CLASP_VERSION","0.4.0-622-g9e0535b")
@@ -401,13 +242,12 @@ def configure(cfg):
     cfg.define("DEBUG_CL_SYMBOLS",1)
     cfg.define("DEBUG_DRAG",1)
     cfg.define("DEBUG_TRACE_INTERPRETED_CLOSURES",1)
-#    cfg.define("EXPAT",1)
+    cfg.define("EXPAT",1)
     cfg.define("INCLUDED_FROM_CLASP",1)
     cfg.define("INHERITED_FROM_SRC",1)
-    cfg.define("LLVM_VERSION_X100",390)
-    cfg.define("LLVM_VERSION","3.9")
+    cfg.define("LLVM_VERSION","390")
     cfg.define("NDEBUG",1)
-#    cfg.define("READLINE",1)
+    cfg.define("READLINE",1)
     cfg.define("USE_AMC_POOL",1)
     cfg.define("USE_EXPENSIVE_BACKTRACE",1)
     cfg.define("X86",1)
@@ -419,33 +259,18 @@ def configure(cfg):
 #    cfg.env.append_value('CXXFLAGS', ['-v'] )
 #    cfg.env.append_value('CXXFLAGS', ['-I../src/main/'] )
     includes = [ 'include/' ]
-    includes = includes + cfg.plugins_include_dirs
+    includes = includes + cfg.plugins_includes
     includes_from_build_dir = []
     for x in includes:
-        includes_from_build_dir.append("-I%s/%s"%(cfg.path.abspath(),x))
-#    print("DEBUG includes_from_build_dir = %s\n" % includes_from_build_dir)
+        includes_from_build_dir.append("-I%s/%s"%(os.getenv("CLASP_HOME"),x))
+    print("DEBUG includes_from_build_dir = %s\n" % includes_from_build_dir)
     cfg.env.append_value('CXXFLAGS', [ '-std=c++11'])
     cfg.env.append_value('CXXFLAGS', includes_from_build_dir )
     cfg.env.append_value('CFLAGS', includes_from_build_dir )
     cfg.env.append_value('CXXFLAGS', '-flto')
     cfg.env.append_value('CFLAGS', '-flto')
-    if (cfg.env['DEST_OS'] == LINUX_OS ):
-        cfg.env.append_value('LINKFLAGS', '-fuse-ld=gold')
-        cfg.env.append_value('LINKFLAGS', ['-stdlib=libstdc++'])
-        cfg.env.append_value('LINKFLAGS', ['-lstdc++'])
-        cfg.env.append_value('LINKFLAGS', '-pthread')
-    elif (cfg.env['DEST_OS'] == DARWIN_OS ):
-        cfg.env.append_value('LINKFLAGS', ['-Wl,-export_dynamic'])
-        cfg.env.append_value('LINKFLAGS', ['-Wl,-stack_size,0x1000000'])
-        lto_library_name = cfg.env.cxxshlib_PATTERN % "LTO"  # libLTO.<os-dep-extension>
-        if (cfg.options.externals_clasp_dir!=False):
-            lto_library = "%s/build/release/lib/%s" % (cfg.options.externals_clasp_dir,lto_library_name)
-        else:
-            raise Exception("You need to provide --externals_clasp_dir for now")
-        cfg.env.append_value('LINKFLAGS',"-Wl,-lto_library,%s" % lto_library)
-        cfg.env.append_value('LINKFLAGS', ['-lc++'])
-        cfg.env.append_value('LINKFLAGS', ['-stdlib=libc++'])
-    cfg.env.append_value('INCLUDES', ['/usr/include'] )
+    cfg.env.append_value('CXXFLAGS', os.getenv("CLASP_RELEASE_CXXFLAGS").split() )
+    cfg.env.append_value('CXXFLAGS', ['-I/usr/include'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-macro-redefined'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-deprecated-register'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-expansion-to-defined'] )
@@ -453,168 +278,111 @@ def configure(cfg):
     cfg.env.append_value('CXXFLAGS', ['-Wno-invalid-offsetof'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-#pragma-messages'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-inconsistent-missing-override'] )
+    lto_library = "%s/libLTO.%s" % (os.getenv("CLASP_RELEASE_LLVM_LIB_DIR"), os.getenv("CLASP_LIB_EXTENSION"))
+    cfg.env.append_value('LINKFLAGS',"-Wl,-lto_library,%s" % lto_library)
     cfg.env.append_value('LINKFLAGS', ['-flto'])
-    cfg.env.append_value('LIBPATH', ['/usr/lib'])
+    cfg.env.append_value('LINKFLAGS', ['-L/usr/lib'])
+    cfg.env.append_value('LINKFLAGS', ['-Wl,-stack_size,0x1000000'])
     cfg.env.append_value('LINKFLAGS', ['-fvisibility=default'])
+    cfg.env.append_value('LINKFLAGS', ['-lc++'])
     cfg.env.append_value('LINKFLAGS', ['-rdynamic'])
+    cfg.env.append_value('LINKFLAGS', ['-Wl,-export_dynamic'])
+#    cfg.env.append_value('LINKFLAGS', ['-Wl,-exported_symbols_list,%s/src/llvmo/intrinsic-api.txt' % os.getenv("CLASP_HOME")] )
+    cfg.env.append_value('LINKFLAGS', ['-stdlib=libc++'])
+    clasp_build_libraries = [
+            '-lclangAnalysis',
+            '-lclangARCMigrate',
+            '-lclangAST',
+            '-lclangASTMatchers',
+            '-lclangBasic',
+            '-lclangCodeGen',
+            '-lclangDriver',
+            '-lclangDynamicASTMatchers',
+            '-lclangEdit',
+            '-lclangFormat',
+            '-lclangFrontend',
+            '-lclangFrontendTool',
+            '-lclangIndex',
+            '-lclangLex',
+            '-lclangParse',
+            '-lclangRewrite',
+            '-lclangRewriteFrontend',
+            '-lclangSema',
+            '-lclangSerialization',
+            '-lclangStaticAnalyzerCheckers',
+            '-lclangStaticAnalyzerCore',
+            '-lclangStaticAnalyzerFrontend',
+            '-lclangTooling',
+            '-lclangToolingCore',
+            '-lboost_filesystem',
+            '-lboost_regex',
+            '-lboost_date_time',
+            '-lboost_program_options',
+            '-lboost_system',
+            '-lboost_iostreams',
+            '-lz',
+            '-lncurses',
+            '-lreadline' ]
     sep = " "
-    cfg.env.append_value('STLIB', cfg.plugins_stlib)
-    cfg.env.append_value('LIB', cfg.plugins_lib)
-    cfg.env.append_value('STLIB', cfg.env.STLIB_CLANG)
-    cfg.env.append_value('STLIB', cfg.env.STLIB_LLVM)
-    cfg.env.append_value('STLIB', cfg.env.STLIB_BOOST)
-    cfg.env.append_value('STLIB', cfg.env.STLIB_Z)
-    if (cfg.env['DEST_OS'] == LINUX_OS ):
-        cfg.env.append_value('LIB', cfg.env.LIB_DL)
-    cfg.env.append_value('LIB', cfg.env.LIB_NCURSES)
-    cfg.env.append_value('LIB', cfg.env.LIB_M)
-    cfg.env.append_value('LIB', cfg.env.LIB_GMP)
-    print("cfg.env.STLIB = %s" % cfg.env.STLIB)
-    print("cfg.env.LIB = %s" % cfg.env.LIB)
+    cfg.recurse('plugins')
+    cfg.define("CLASP_BUILD_LIBRARIES", sep.join(clasp_build_libraries))
+    cfg.env.append_value('LINKFLAGS', clasp_build_libraries)
     env_copy = cfg.env.derive()
-    for gc in GCS:
-        for debug_char in DEBUG_CHARS:
-            variant = gc+"_"+debug_char
-            variant_instance = eval("i"+variant+"()")
-            print("Setting up variant: %s" % variant_instance.variant_dir())
-            variant_instance.configure_variant(cfg,env_copy)
-            build_plugin_headers("%s/%s" % (cfg.bldnode,variant),cfg.plugins_gcinterface_include_files)
+    for v in VARIANTS:
+        vi = eval(v+"()")
+        print("Setting up executable_name: %s" % vi.executable_name)
+        vi.configure(cfg,env_copy)
+        print("cfg.bldnode = %s\n" % cfg.bldnode)
+        print("variant = %s\n" % v )
+        build_plugin_headers("%s/%s" % (cfg.bldnode,v),cfg.plugins_headers)
 
-def copy_tree(bld,src,dest):
-    print("Copy tree src = %s" % src)
-    print("          dest= %s" % dest)
+
 
 def build(bld):
 #    bld(name='myInclude', export_includes=[bld.env.MY_MYSDK, 'include'])
     if not bld.variant:
         bld.fatal('Call waf with build_variant')
-    stage = bld.stage
-    stage_val = stage_value(bld,stage)
-    print("Building stage --> %s" % stage)
+    print("In build(bld)")
     bld.clasp_source_files = []
     bld.recurse('src')
-    bld.plugins_include_files = []
     bld.plugins_source_files = []
     bld.recurse('plugins')
     bld.recurse('src/main')
     source_files = bld.clasp_source_files + bld.plugins_source_files
 #    print("DEBUG recursed source_files = %s" % source_files)
-    bld.install_files('${PREFIX}/Contents/Resources/source-code/',source_files,relative_trick=True,cwd=bld.path)
-#    print("bld.path = %s"%bld.path)
-    clasp_headers = bld.path.ant_glob("include/clasp/**/*.h")
-#    print("clasp_headers = %s" % clasp_headers)
-    bld.install_files('${PREFIX}/Contents/Resources/source-code/',clasp_headers,relative_trick=True,cwd=bld.path)
-    lisp_source = bld.path.ant_glob("src/lisp/**/*.l*")
-    bld.install_files('${PREFIX}/Contents/Resources/source-code/',lisp_source,relative_trick=True,cwd=bld.path)
+#    bld.program(source=all_files(),target="clasp")
     variant = eval(bld.variant+"()")
     bld.env = bld.all_envs[bld.variant]
     bld.variant_obj = variant
-#    contents_path = bld.path.find_dir('%s/%s/Contents'%(out,variant.variant_dir()))
-#    bld.install_files('${PREFIX}/Contents',contents_path,relative_trick=True)
-#    contents_tree = contents_path.ant_glob('**/*.*')
-#    for c in contents_tree:
-#        bld.install_files('${PREFIX}/Contents/%s' % c.path_from(contents_path).__str__(), c)
+    clasp_executable = bld.path.find_or_declare(variant.executable_name)
+    lto_debug_info = bld.path.find_or_declare('%s.lto.o' % variant.executable_name)
+    intrinsics_info = bld.path.find_or_declare('%s-intrinsics.lbc'%variant.bitcode_name)
     print("Building with variant = %s" % variant)
-    if (stage_val >= 0):
-        clasp_executable = bld.path.find_or_declare(variant.executable_name(stage='i'))
-        if (bld.env['DEST_OS'] == LINUX_OS ):
-            executable_dir = "bin"
-            bld.program(source=source_files,target=[clasp_executable],install_path='${PREFIX}/bin')
-        elif (bld.env['DEST_OS'] == DARWIN_OS ):
-            lto_debug_info = bld.path.find_or_declare('%s.lto.o' % variant.executable_name(stage='i'))
-            executable_dir = "MacOS"
-            bld.program(source=source_files,target=[clasp_executable,lto_debug_info],install_path='${PREFIX}/MacOS')
-            iclasp_dsym = bld.path.find_or_declare("%s.dSYM"%variant.executable_name(stage='i'))
-        if (stage_val >= 1):
-            print("About to add compile_aclasp")
-            cmp_aclasp = compile_aclasp(env=bld.env)
-            cmp_aclasp.set_inputs(clasp_executable)
-            aclasp_executable = bld.path.find_or_declare(variant.executable_name(stage='a'))
-            cmp_aclasp.set_outputs(aclasp_executable)
-            bld.add_to_group(cmp_aclasp)
-            bld.install_as('${PREFIX}/%s/%s' % (executable_dir, aclasp_executable.name), aclasp_executable)
-            aclasp_common_lisp_bitcode = bld.path.find_or_declare(variant.common_lisp_bitcode_name(stage='a'))
-            bld.install_as('${PREFIX}/Contents/Resources/bitcode/%s' % variant.common_lisp_bitcode_name(stage='a'), aclasp_common_lisp_bitcode)
-            if (stage_val >= 2):
-                print("About to add compile_bclasp")
-                cmp_bclasp = compile_bclasp(env=bld.env)
-                cmp_bclasp.set_inputs(aclasp_executable)
-                bclasp_executable = bld.path.find_or_declare(variant.executable_name(stage='b'))
-                cmp_bclasp.set_outputs(bclasp_executable)
-                bld.add_to_group(cmp_bclasp)
-                bld.install_as('${PREFIX}/%s/%s' % (executable_dir, bclasp_executable.name), bclasp_executable)
-                bclasp_common_lisp_bitcode = bld.path.find_or_declare(variant.common_lisp_bitcode_name(stage='b'))
-                bld.install_as('${PREFIX}/Contents/Resources/bitcode/%s' % variant.common_lisp_bitcode_name(stage='b'), aclasp_common_lisp_bitcode)
-                if (stage_val >= 3):
-                    print("About to add compile_cclasp")
-                    cmp_cclasp = compile_cclasp(env=bld.env)
-                    cmp_cclasp.set_inputs(bclasp_executable)
-                    cclasp_executable = bld.path.find_or_declare(variant.executable_name(stage='c'))
-                    cmp_cclasp.set_outputs(cclasp_executable)
-                    bld.add_to_group(cmp_cclasp)
-                    bld.install_as('${PREFIX}/%s/%s' % (executable_dir, cclasp_executable.name), cclasp_executable)
-                    cclasp_common_lisp_bitcode = bld.path.find_or_declare(variant.common_lisp_bitcode_name(stage='c'))
-                    bld.install_as('${PREFIX}/Contents/Resources/bitcode/%s' % variant.common_lisp_bitcode_name(stage='c'), aclasp_common_lisp_bitcode)
+    bld.program(source=source_files,target=[clasp_executable,lto_debug_info])
+    bld.install_as('${PREFIX}/%s/%s' % (os.getenv("EXECUTABLE_DIR"),variant.executable_name), variant.executable_name, chmod=Utils.O755)
 
+#        files = lisp_source_files(clasp_executable.abspath(),"aclasp")
+#        print("aclasp source files: %s" % files)
+#        if (variant.stage>=0):
+        #     bld.add_group()
+        #     aclasp_lisp_sources = ''
+        #     bld(rule='i%s -I -f ecl-min -e "(compile-aclasp)" -e "(link-aclasp)"' % variant.bitcode_name,target="a%s"%variant.bitcode_name)
+        #     bld.install_as('${PREFIX}/Contents/cxx-bitcode/%s-all.lbc' % variant.bitcode_name, '%s-all.lbc'%variant.bitcode_name)
+        #     bld.install_as('${PREFIX}/Contents/cxx-bitcode/%s-intrinsics.lbc' % variant.bitcode_name, '%s-intrinsics.lbc'%variant.bitcode_name)
+        # if (variant.stage>=1):
+        #     bld.add_group()
+        #     bld(rule='a%s -e "(compile-link-bclasp)"' % variant.bitcode_name,target="b%s"%variant.bitcode_name)
+        # if (variant.stage>=2):
+        #     bld.add_group()
+        #     bld(rule='b%s -e "(compile-link-cclasp)"' % variant.bitcode_name,target="c%s"%variant.bitcode_name)
+        # install
 
 from waflib import TaskGen
 from waflib import Task
 
-class dsymutil(Task.Task):
-    run_str = '${DSYMUTIL} ${SRC}'
-    color = 'BLUE';
-    after = [ 'cprogram', 'cxxprogram' ]
-    before = ['inst']
-
-@TaskGen.feature('dsymutil')
-@TaskGen.after('apply_link')
-def add_dsymutil_task(self):
-    try:
-        link_task = self.link_task
-    except AttributeError:
-        return
-    self.create_task('dsymutil',link_task.outputs[0])
-
-class compile_aclasp(Task.Task):
-    def run(self):
-        print("In compile_aclasp %s -> %s" % (self.inputs[0].abspath(),self.outputs[0].abspath()))
-        cmd = '%s -I -f ecl-min -N -e "(compile-aclasp)" -e "(quit)"' % self.inputs[0].abspath()
-        print("  cmd: %s" % cmd)
-        return self.exec_command(cmd)
-    def exec_command(self, cmd, **kw):
-        kw['stdout'] = sys.stdout
-        return super(compile_aclasp, self).exec_command(cmd, **kw)
-    def keyword(self):
-        return 'Compile aclasp using... '
-
-class compile_bclasp(Task.Task):
-    def run(self):
-        print("In compile_bclasp %s -> %s" % (self.inputs[0].abspath(),self.outputs[0].abspath()))
-        cmd = '%s -N -e "(compile-bclasp)" -e "(quit)"' % self.inputs[0].abspath()
-        print("  cmd: %s" % cmd)
-        return self.exec_command(cmd)
-    def exec_command(self, cmd, **kw):
-        kw['stdout'] = sys.stdout
-        return super(compile_bclasp, self).exec_command(cmd, **kw)
-    def keyword(self):
-        return 'Compile bclasp using... '
-
-class compile_cclasp(Task.Task):
-    def run(self):
-        print("In compile_cclasp %s -> %s" % (self.inputs[0].abspath(),self.outputs[0].abspath()))
-        cmd = '%s -N -e "(compile-cclasp)" -e "(quit)"' % self.inputs[0].abspath()
-        print("  cmd: %s" % cmd)
-        return self.exec_command(cmd)
-    def exec_command(self, cmd, **kw):
-        kw['stdout'] = sys.stdout
-        return super(compile_cclasp, self).exec_command(cmd, **kw)
-    def keyword(self):
-        return 'Compile cclasp using... '
-    
-
 class llvm_link(Task.Task):
     def run(self):
-        all_inputs = StringIO()
+        all_inputs = StringIO.StringIO()
         for x in self.inputs:
             all_inputs.write(' %s' % x)
         return self.exec_command('llvm-link %s -o %s' % ( all_inputs.getvalue(), self.outputs[0]) )
@@ -626,8 +394,9 @@ class preprocess(Task.Task):
 
     def keyword(ctx):
         return "Preprocessing"
-    
+
 class sif(Task.Task):
+    clasp_home = os.getenv("CLASP_HOME")
     run_str = 'generate-one-sif ${SRC[0].abspath()} ${TGT[0].abspath()}'
     ext_out = ['.sif']
 
@@ -637,7 +406,7 @@ class sif(Task.Task):
 class generated_headers(Task.Task):
     ext_out = ['.h']
     def run(self):
-        cmd = StringIO()
+        cmd = StringIO.StringIO()
         cmd.write('generate-headers-from-all-sifs src/main/')
         for f in self.inputs:
             cmd.write(' %s' % f.abspath())
@@ -646,7 +415,7 @@ class generated_headers(Task.Task):
 class link_bitcode(Task.Task):
     ext_out = ['.lbc']
     def run(self):
-        cmd = StringIO()
+        cmd = StringIO.StringIO()
         cmd.write('llvm-link ')
         for f in self.inputs:
             cmd.write(' %s' % f.abspath())
@@ -658,8 +427,6 @@ class link_bitcode(Task.Task):
 @TaskGen.feature('cxx')
 @TaskGen.after('process_source')
 def preprocess_task_generator(self):
-    if ( not 'variant_obj' in self.bld.__dict__ ):
-        return
     compiled_tasks = self.compiled_tasks
     all_sif_files = []
     all_o_files = []
@@ -675,8 +442,7 @@ def preprocess_task_generator(self):
                 all_sif_files.append(sif_node)
             for node in task.outputs:
 #                print("node = %s" % node.get_src())
-#                print("node.name = %s" % node.name)
-                if ( node.name[:len('intrinsics.cc')] == 'intrinsics.cc' ):
+                if ( node.get_src().__str__()[:len('intrinsics.cc')] == 'intrinsics.cc' ):
                     intrinsics_o = node
                 all_o_files.append(node)
         if ( task.__class__.__name__ == 'c' ):
@@ -688,40 +454,32 @@ def preprocess_task_generator(self):
                           'generated/initFunctions_inc.h',
                           'generated/initializers_inc.h',
                           'generated/sourceInfo_inc.h',
-                          'generated/symbols_scraped_inc.h']
+                          'generated/symbols_scraped_inc.h'
+#                          'src/include/clasp/main/generated/symbols_scraped_inc.h'
+    ]
     nodes = []
     for x in generated_headers:
         nodes.append(self.path.find_or_declare(x))
     self.create_task('generated_headers',all_sif_files,nodes)
-    self.bld.install_files('${PREFIX}/Contents/Resources/source-code/include/', nodes)
     variant = self.bld.variant_obj
-    cxx_all_bitcode_name = '%s-all-cxx.lbc' % variant.bitcode_name()
-    intrinsics_bitcode_name = '%s-intrinsics-cxx.lbc' % variant.bitcode_name()
-    cxx_all_bitcode_node = self.path.find_or_declare(cxx_all_bitcode_name)
-    intrinsics_bitcode_node = self.path.find_or_declare(intrinsics_bitcode_name)
-    self.create_task('link_bitcode',all_o_files,cxx_all_bitcode_node)
-    self.create_task('link_bitcode',[intrinsics_o],intrinsics_bitcode_node)
-    self.bld.install_files('${PREFIX}/Contents/Resources/bitcode/%s'%intrinsics_bitcode_name,intrinsics_bitcode_node)
-    self.bld.install_files('${PREFIX}/Contents/Resources/bitcode/%s'%cxx_all_bitcode_name,cxx_all_bitcode_node)
+    library_node = self.path.find_or_declare('%s-all.lbc' % variant.bitcode_name )
+    intrinsics_library_node = self.path.find_or_declare('%s-intrinsics.lbc' % variant.bitcode_name )
+    print("library_node = %s" % library_node.abspath())
+    self.create_task('link_bitcode',all_o_files,library_node)
+    self.create_task('link_bitcode',[intrinsics_o],intrinsics_library_node)
 
 
 def init(ctx):
     from waflib.Build import BuildContext, CleanContext, InstallContext, UninstallContext
-    for s in STAGE_CHARS:
-        for gc in GCS:
-            for debug_char in DEBUG_CHARS:
-                for y in (BuildContext, CleanContext, InstallContext, UninstallContext):
-                    name = y.__name__.replace('Context','').lower()
-                    class tmp(y):
-                        variant = gc+'_'+debug_char
-                        cmd = name + '_' + s + variant
-                        stage = s
+    for x in VARIANTS:
+	for y in (BuildContext, CleanContext, InstallContext, UninstallContext):
+	    name = y.__name__.replace('Context','').lower()
+	    class tmp(y):
+		cmd = name + '_' + x
+		variant = x
 
     def buildall(ctx):
-        import waflib.Options
-        for s in STAGE_CHARS:
-            for gc in GCS:
-                for debug_char in DEBUG_CHARS:
-                    var = 'build_'+s+x+'_'+debug_char
-                    waflib.Options.commands.insert(0, var)
-
+	import waflib.Options
+	for x in VARIANTS:
+            var = 'build_'+x
+	    waflib.Options.commands.insert(0, var)
