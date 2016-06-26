@@ -4,14 +4,14 @@
 
 /*
 Copyright (c) 2014, Christian E. Schafmeister
- 
+
 CLASP is free software; you can redistribute it and/or
 modify it under the terms of the GNU Library General Public
 License as published by the Free Software Foundation; either
 version 2 of the License, or (at your option) any later version.
- 
+
 See directory 'clasp/licenses' for full details.
- 
+
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
 
@@ -24,43 +24,68 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 /* -^- */
-#ifndef _core__pointer_H_
-#define _core__pointer_H_
 
-#include <clasp/core/foundation.h>
-#include <clasp/core/object.h>
-#include <clasp/core/pointer.fwd.h>
+#if !defined(__CLASP_CORE_POINTER_H__)
+#define __CLASP_CORE_POINTER_H__
+
+// ---------------------------------------------------------------------------
+//    SYSTEM INCLUDES
+// ---------------------------------------------------------------------------
+
+// --- Standard C++ Includes ---
+// NONE
+
+// --- Platform-specific Includes ---
+// NONE
+
+// ---------------------------------------------------------------------------
+//    APPLICaATION INCLUDES
+// ---------------------------------------------------------------------------
+
+#include "clasp/core/foundation.h"
+#include "clasp/core/object.h"
+#include "clasp/core/pointer.fwd.h"
+
+// ---------------------------------------------------------------------------
+//   NAMESPACE
+// ---------------------------------------------------------------------------
+
+#if defined(__cplusplus)
 
 namespace core {
+
+// ---------------------------------------------------------------------------
+//   CLASSES & METHODS & FUNCTIONS
+// ---------------------------------------------------------------------------
+
 class Pointer_O : public General_O {
-  LISP_CLASS(core, CorePkg, Pointer_O, "Pointer",General_O);
-  //    DECLARE_ARCHIVE();
-public: // Simple default ctor/dtor
+  LISP_CLASS(core, CorePkg, Pointer_O, "Pointer", General_O);
+
+public: // public methods
   DEFAULT_CTOR_DTOR(Pointer_O);
 
-public: // ctor/dtor for classes with shared virtual base
-        //    explicit Pointer_O(core::Class_sp const& mc) : T_O(mc), T(mc) {};
-        //    virtual ~Pointer_O() {};
-public:
-  void initialize();
+  static Pointer_sp create(void *);
+  // static Pointer_sp   createForT_sp( T_sp );
 
-private: // instance variables here
-  void *_Pointer;
+  static Pointer_sp null_pointer(void);
+  static Pointer_sp make(core::Number_sp);
 
-public:
-  static Pointer_sp create(void *p);
-  /*! Create a pointer to a T_sp shared-ptr */
-  static Pointer_sp createForT_sp(T_sp obj);
+  Pointer_sp inc_pointer(core::Integer_sp);
 
-public: // Functions here
-  void *ptr() const { return this->_Pointer; };
+  void initialize(void);
+  void *ptr() const { return this->m_rawptr; };
+  virtual bool eql_(T_sp) const;
+  string __repr__(void) const;
 
-  virtual bool eql_(T_sp obj) const;
+  bool pointerP() const { IMPLEMENT_ME(); };
+  bool null_pointerP() const { IMPLEMENT_ME(); };
 
-  string __repr__() const;
+private: // instance variables
+  void *m_rawptr;
 
 }; // Pointer class
 
-}; // core namespace
+}; // namespace
 
-#endif /* _core__pointer_H_ */
+#endif // __cplusplus
+#endif // __CLASP_CORE_POINTER_H__
