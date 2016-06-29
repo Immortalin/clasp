@@ -59,22 +59,28 @@ CL_DEFUN Bignum_sp Bignum_O::make(const string &value_in_string) {
 };
 
 string Bignum_O::valueAsString() const {
-  stringstream ss;
   int ibase = 10;
+  SafeBuffer buffer;
+  core__bignum_to_string(buffer._Buffer,this->_value,ibase);
+  return buffer._Buffer->get();
+}
+
+#if 0
+string Bignum_O::valueAsString() const {
+  int ibase = 10;
+  stringstream ss;
   char *buffer = NULL;
   std::string result;
-
   buffer = mpz_get_str(NULL, ibase, this->_value.get_mpz_t());
-
   if (buffer != NULL) {
     result = buffer;
     free(buffer);
   } else {
     SIMPLE_ERROR(BF("Could not convert Bignum to String"));
   }
-
   return result;
-};
+}
+#endif
 
 string Bignum_O::description() const {
   return this->valueAsString();
