@@ -74,7 +74,7 @@
   (let ((output-pathname (compile-file-pathname part-bitcode-pathname :output-type :object))
         (reloc-model (cond
                       ((member :target-os-linux *features*) 'llvm-sys:reloc-model-pic-)
-                      (t 'llvm-sys:reloc-model-default))))
+                      (t 'llvm-sys:reloc-model-undefined))))
     (bitcode-to-obj-file part-bitcode-pathname output-pathname :reloc-model reloc-model)
     (truename output-pathname)))
 
@@ -93,36 +93,41 @@
 
 (in-package :cmp)
 
-(defun execute-link-fasl (in-bundle-file in-all-names &key (link-type :executable))
+(defun execute-link-fasl (in-bundle-file in-all-names)
   ;; options are a list of strings like (list "-v")
   (let ((options nil)
         (all-object-files (mapcar (lambda (n)
                                     (ensure-string n))
                                   (if (listp in-all-names)
                                       in-all-names
-                                      (list in-all-names))))
+                                    (list in-all-names))))
         (bundle-file (ensure-string in-bundle-file)))
     (cond
-      ((member :target-os-darwin *features*)
-       (ext:run-clang `(,@options
-                        ,@all-object-files
+     ((member :target-os-darwin *features*)
+      (ext:run-clang `(,@options
+                       ,@all-object-files
 ;;;                                 "-macosx_version_min" "10.10"
-                        "-flto"
-                        "-flat_namespace" 
-                        "-undefined" "warning"
-                        "-bundle"
-                        "-o"
-                        ,bundle-file)
-                      :output-file-name bundle-file))
-      ((member :target-os-linux *features*)
-       ;; Linux needs to use clang to link
-       (ext:run-clang `(,@options
-                        ,@all-object-files
-                        "-shared"
-                        "-o"
-                        ,bundle-file)
-                      :output-file-name bundle-file))
-      (t (error "Add support for this operating system to cmp:generate-link-command")))
+                       "-flto"
+                       "-flat_namespace" 
+                       "-undefined" "warning"
+                       "-bundle"
+;;;                        ,@link-flags
+;;;                        ,(bformat nil "-Wl,-object_path_lto,%s.lto.o" exec-file)
+                       "-o"
+                       ,bundle-file)
+                     :output-file-name bundle-file))
+     ((member :target-os-linux *features*)
+      ;; Linux needs to use clang to link
+      (ext:run-clang `("-v"
+                       ,@options
+                       ,@all-object-files
+                       "-flto"
+                       "-fuse-ld=gold"
+                       "-shared"
+                       "-o"
+                       ,bundle-file)
+                     :output-file-name bundle-file))
+     (t (error "Add support for this operating system to cmp:generate-link-command")))
     (truename in-bundle-file)))
 
 (defun execute-link-executable (output-file-name in-bitcode-names)
