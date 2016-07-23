@@ -1,8 +1,8 @@
 import subprocess
 from waflib.Tools.compiler_cxx import cxx_compiler
 from waflib.Tools.compiler_c import c_compiler
-cxx_compiler['linux'] = ['clang++']
-c_compiler['linux'] = ['clang']
+#cxx_compiler['linux'] = ['clang++']
+#c_compiler['linux'] = ['clang']
 
 import sys
 import os
@@ -76,7 +76,14 @@ def libraries_as_link_flags(fmt,libs):
         all_libs.write(" ")
         all_libs.write(fmt % x)
     return all_libs.getvalue()
-    
+
+def generate_dsym_files(name,path):
+    info_plist = path.find_or_declare("Contents/Info.plist")
+    dwarf_file = path.find_or_declare("Contents/Resources/DWARF/%s"%name)
+    print("info_plist = %s" % info_plist)
+    print("dwarf_file = %s" % dwarf_file)
+    return [info_plist,dwarf_file]
+
 def stage_value(ctx,s):
     if ( s == 's' ):
         sval = -1
@@ -96,6 +103,7 @@ def configure_clasp(cfg,variant):
     include_path = "%s/%s/%s/src/include/clasp/main/" % (cfg.path.abspath(),out,variant.variant_dir()) #__class__.__name__)
 #    print("Including from %s" % include_path )
     cfg.env.append_value("CXXFLAGS", ['-I%s' % include_path])
+    cfg.env.append_value("CFLAGS", ['-I%s' % include_path])
     cfg.define("EXECUTABLE_NAME",variant.executable_name())
     cfg.define("APP_NAME",APP_NAME)
     cfg.define("BITCODE_NAME",variant.bitcode_name())
@@ -143,6 +151,10 @@ class variant(object):
         return self.gc_name
     def bitcode_name(self):
         return "%s-%s" % (self.gc_name,self.debug_char)
+    def cxx_all_bitcode_name(self):
+        return '%s-all-cxx.a' % self.bitcode_name()
+    def intrinsics_bitcode_name(self):
+        return '%s-intrinsics-cxx.a' % self.bitcode_name()
     def configure_for_release(self,cfg):
         cfg.define("_RELEASE_BUILD",1)
         cfg.env.append_value('CXXFLAGS', [ '-O3', '-g' ])
@@ -213,6 +225,14 @@ class boehmdc_d(boehm):
 class mps(variant):
     def configure_variant(self,cfg,env_copy):
         cfg.define("USE_MPS",1)
+        if (cfg.env['DEST_OS'] == DARWIN_OS ):
+            cfg.env.append_value('LINKFLAGS', '-Wl,-object_path_lto,%s.lto.o' % self.executable_name())
+        print("Setting up boehm library cfg.env.STLIB_BOEHM = %s " % cfg.env.STLIB_BOEHM)
+        print("Setting up boehm library cfg.env.LIB_BOEHM = %s" % cfg.env.LIB_BOEHM)
+        if (cfg.env.LIB_BOEHM == [] ):
+            cfg.env.append_value('STLIB',cfg.env.STLIB_BOEHM)
+        else:
+            cfg.env.append_value('LIB',cfg.env.LIB_BOEHM)
         self.common_setup(cfg)
         
 class mpsprep_o(mps):
@@ -327,10 +347,6 @@ def lisp_source_files(exe,stage):
     print( "source-files-%s: %s" % (stage_name(stage),out))
     return out
 
-def options(opt):
-    opt.load('compiler_cxx')
-    opt.load('compiler_c')
-#    opt.add_option('--gc', default='boehm', help='Garbage collector');
 
 
 def build_plugin_headers(root,headers_list):
@@ -347,24 +363,34 @@ def build_plugin_headers(root,headers_list):
 def options(cfg):
     cfg.load('compiler_cxx')
     cfg.load('compiler_c')
-    cfg.add_option('--externals_clasp_dir', action='store', default=False, help='Path to externals-clasp')
 
 def configure(cfg):
     global LLVM_LIBRARIES
     cfg.check_waf_version(mini='1.7.5')
-    llvm_config = cfg.find_program("llvm-config",var="LLVM_CONFIG")
+    path = os.getenv("PATH").split(":")
+    externals_clasp_dir = os.getenv("EXTERNALS_CLASP_DIR")
+    if (externals_clasp_dir != None):
+        externals_clasp_bin_dir = "%s/build/release/bin" % externals_clasp_dir
+        path.insert(0,externals_clasp_bin_dir)
+        print(" Inserted %s into the start of path" % externals_clasp_bin_dir)
+    print( "path = %s" % path)
+    llvm_config = cfg.find_program("llvm-config",var="LLVM_CONFIG",path_list=path)
+    print( "llvm_config = %s" % cfg.env.LLVM_CONFIG)
 #    print("llvm_config = %s" % llvm_config[0])
     llvm_libs_bytes = subprocess.Popen([llvm_config[0], "--libs"], stdout=subprocess.PIPE).communicate()[0]
     LLVM_LIBRARIES = strip_libs(llvm_libs_bytes.decode("ASCII",'ignore'))
-#    print("llvm_libs = %s" % llvm_libs)
+#    clang_bin_dir_bytes = subprocess.Popen([llvm_config[0], "--bindir"], stdout=subprocess.PIPE).communicate()[0]
+#    clang_bin_dir = str(clang_bin_dir_bytes.decode("ASCII",'ignore').split()[0])
+#    print("clang_bin_dir = %s" % clang_bin_dir)
+    global cxx_compiler, c_compiler
+    cxx_compiler['linux'] = ["clang++"]
+    c_compiler['linux'] = ["clang"]
     cfg.load('compiler_cxx')
     cfg.load('compiler_c')
+    llvm_release_lib_dir_bytes = subprocess.Popen([llvm_config[0], "--libdir"], stdout=subprocess.PIPE).communicate()[0]
+    llvm_release_lib_dir = str(llvm_release_lib_dir_bytes.decode("ASCII",'ignore').split()[0])
+    print("llvm_release_lib_dir = %s" % llvm_release_lib_dir )
 ### Uncommenting these checks causes problems-- AttributeError: 'BuildContext' object has no attribute 'variant_obj'
-    cfg.plugins_include_dirs = []
-    cfg.plugins_gcinterface_include_files = []
-    cfg.plugins_stlib = []
-    cfg.plugins_lib = []
-    cfg.recurse('plugins')
     cfg.check_cxx(lib='gmpxx gmp'.split(), cflags='-Wall', uselib_store='GMP')
     try:
         cfg.check_cxx(stlib='gc', cflags='-Wall', uselib_store='BOEHM')
@@ -376,17 +402,18 @@ def configure(cfg):
     cfg.check_cxx(lib='ncurses', cflags='-Wall', uselib_store='NCURSES')
     cfg.check_cxx(lib='m', cflags='-Wall', uselib_store='M')
     cfg.check_cxx(stlib=BOOST_LIBRARIES, cflags='-Wall', uselib_store='BOOST')
-    print("externals_clasp_dir = %s" % cfg.options.externals_clasp_dir)
-    if ( cfg.options.externals_clasp_dir != False ):
-        clasp_release_llvm_lib_dir = "%s/build/release/lib/"%cfg.options.externals_clasp_dir
-        cfg.env.append_value('LINKFLAGS', "-L%s" % clasp_release_llvm_lib_dir )
-        cfg.check_cxx(stlib=LLVM_LIBRARIES, cflags='-Wall', uselib_store='LLVM', stlibpath = clasp_release_llvm_lib_dir )
-        cfg.check_cxx(stlib=CLANG_LIBRARIES, cflags='-Wall', uselib_store='CLANG', stlibpath = clasp_release_llvm_lib_dir )
-    else:    
-        cfg.check_cxx(stlib=LLVM_LIBRARIES, cflags='-Wall', uselib_store='LLVM')
-        cfg.check_cxx(stlib=CLANG_LIBRARIES, cflags='-Wall', uselib_store='CLANG')
-#    print("DEBUG cfg.plugins_includes = %s" % cfg.plugins_includes)
+    cfg.plugins_include_dirs = []
+    cfg.plugins_gcinterface_include_files = []
+    cfg.plugins_stlib = []
+    cfg.plugins_lib = []
+    cfg.recurse('plugins')
+    link_flag = "-L%s" % llvm_release_lib_dir
+    print("link_flag = %s" % link_flag )
+    cfg.env.append_value('LINKFLAGS', [link_flag])
+    cfg.check_cxx(stlib=LLVM_LIBRARIES, cflags='-Wall', uselib_store='LLVM', stlibpath = llvm_release_lib_dir )
+    cfg.check_cxx(stlib=CLANG_LIBRARIES, cflags='-Wall', uselib_store='CLANG', stlibpath = llvm_release_lib_dir )
     cfg.env.append_value('CXXFLAGS', ['-I./'])
+    cfg.env.append_value('CFLAGS', ['-I./'])
     if ('program_name' in cfg.__dict__):
         pass
     else:
@@ -426,7 +453,7 @@ def configure(cfg):
     cfg.define("__STDC_FORMAT_MACROS",1)
     cfg.define("__STDC_LIMIT_MACROS",1)
 #    cfg.env.append_value('CXXFLAGS', ['-v'] )
-#    cfg.env.append_value('CXXFLAGS', ['-I../src/main/'] )
+#    cfg.env.append_value('CFLAGS', ['-v'] )
     includes = [ 'include/' ]
     includes = includes + cfg.plugins_include_dirs
     includes_from_build_dir = []
@@ -437,8 +464,8 @@ def configure(cfg):
 #    cfg.env.append_value('CXXFLAGS', ["-D_GLIBCXX_USE_CXX11_ABI=1"])
     cfg.env.append_value('CXXFLAGS', includes_from_build_dir )
     cfg.env.append_value('CFLAGS', includes_from_build_dir )
-    cfg.env.append_value('CXXFLAGS', '-flto')
-    cfg.env.append_value('CFLAGS', '-flto')
+    cfg.env.append_value('CXXFLAGS', '-flto=thin')
+    cfg.env.append_value('CFLAGS', '-flto=thin')
     if (cfg.env['DEST_OS'] == LINUX_OS ):
         cfg.env.append_value('LINKFLAGS', '-fuse-ld=gold')
         cfg.env.append_value('LINKFLAGS', ['-stdlib=libstdc++'])
@@ -448,10 +475,7 @@ def configure(cfg):
         cfg.env.append_value('LINKFLAGS', ['-Wl,-export_dynamic'])
         cfg.env.append_value('LINKFLAGS', ['-Wl,-stack_size,0x1000000'])
         lto_library_name = cfg.env.cxxshlib_PATTERN % "LTO"  # libLTO.<os-dep-extension>
-        if (cfg.options.externals_clasp_dir!=False):
-            lto_library = "%s/build/release/lib/%s" % (cfg.options.externals_clasp_dir,lto_library_name)
-        else:
-            raise Exception("You need to provide --externals_clasp_dir for now")
+        lto_library = "%s/%s" % ( llvm_release_lib_dir, lto_library_name)
         cfg.env.append_value('LINKFLAGS',"-Wl,-lto_library,%s" % lto_library)
         cfg.env.append_value('LINKFLAGS', ['-lc++'])
         cfg.env.append_value('LINKFLAGS', ['-stdlib=libc++'])
@@ -463,7 +487,7 @@ def configure(cfg):
     cfg.env.append_value('CXXFLAGS', ['-Wno-invalid-offsetof'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-#pragma-messages'] )
     cfg.env.append_value('CXXFLAGS', ['-Wno-inconsistent-missing-override'] )
-    cfg.env.append_value('LINKFLAGS', ['-flto'])
+    cfg.env.append_value('LINKFLAGS', ['-flto=thin'])
     cfg.env.append_value('LIBPATH', ['/usr/lib'])
     cfg.env.append_value('LINKFLAGS', ['-fvisibility=default'])
     cfg.env.append_value('LINKFLAGS', ['-rdynamic'])
@@ -514,31 +538,38 @@ def build(bld):
     clasp_headers = bld.path.ant_glob("include/clasp/**/*.h")
 #    print("clasp_headers = %s" % clasp_headers)
     bld.install_files('${PREFIX}/Contents/Resources/source-code/',clasp_headers,relative_trick=True,cwd=bld.path)
-    lisp_source = bld.path.ant_glob("src/lisp/**/*.l*")
-    bld.install_files('${PREFIX}/Contents/Resources/source-code/',lisp_source,relative_trick=True,cwd=bld.path)
+#    lisp_source = bld.path.ant_glob("src/lisp/**/*.l*")
+#    bld.install_files('${PREFIX}/Contents/Resources/source-code/',lisp_source,relative_trick=True,cwd=bld.path)
     variant = eval(bld.variant+"()")
     bld.env = bld.all_envs[bld.variant]
     bld.variant_obj = variant
-#    contents_path = bld.path.find_dir('%s/%s/Contents'%(out,variant.variant_dir()))
-#    bld.install_files('${PREFIX}/Contents',contents_path,relative_trick=True)
-#    contents_tree = contents_path.ant_glob('**/*.*')
-#    for c in contents_tree:
-#        bld.install_files('${PREFIX}/Contents/%s' % c.path_from(contents_path).__str__(), c)
+#    test_linking_source = bld.clasp_test_linking_source_file
+#    test_linking_executable = bld.path.find_or_declare('test_linking')
+#    print("test_linking_source = %s" % test_linking_source)
+#    print("test_linking_executable = %s" % test_linking_executable)
+#    bld.program(source=[test_linking_source],target=test_linking_executable)
     print("Building with variant = %s" % variant)
     if (stage_val >= 0):
-        clasp_executable = bld.path.find_or_declare(variant.executable_name(stage='i'))
+        iclasp_executable = bld.path.find_or_declare(variant.executable_name(stage='i'))
         if (bld.env['DEST_OS'] == LINUX_OS ):
             executable_dir = "bin"
-            bld.program(source=source_files,target=[clasp_executable],install_path='${PREFIX}/bin')
+            bld.program(source=source_files,target=[iclasp_executable],install_path='${PREFIX}/bin')
         elif (bld.env['DEST_OS'] == DARWIN_OS ):
-            lto_debug_info = bld.path.find_or_declare('%s.lto.o' % variant.executable_name(stage='i'))
+            iclasp_lto_o = bld.path.find_or_declare('%s.lto.o' % variant.executable_name(stage='i'))
             executable_dir = "MacOS"
-            bld.program(source=source_files,target=[clasp_executable,lto_debug_info],install_path='${PREFIX}/MacOS')
+            bld.program(source=source_files,target=[iclasp_executable],install_path='${PREFIX}/MacOS')
             iclasp_dsym = bld.path.find_or_declare("%s.dSYM"%variant.executable_name(stage='i'))
+            iclasp_dsym_files = generate_dsym_files(variant.executable_name(stage='i'),iclasp_dsym)
+            dsymutil_iclasp = dsymutil(env=bld.env)
+            dsymutil_iclasp.set_inputs([iclasp_executable,iclasp_lto_o])
+            dsymutil_iclasp.set_outputs(iclasp_dsym_files)
+            bld.add_to_group(dsymutil_iclasp)
+            bld.install_files('${PREFIX}/%s/%s'%(executable_dir,iclasp_dsym.name),iclasp_dsym_files,relative_trick=True,cwd=iclasp_dsym)
         if (stage_val >= 1):
             print("About to add compile_aclasp")
+            intrinsics_bitcode_node = bld.path.find_or_declare(variant.intrinsics_bitcode_name())
             cmp_aclasp = compile_aclasp(env=bld.env)
-            cmp_aclasp.set_inputs(clasp_executable)
+            cmp_aclasp.set_inputs([iclasp_executable,intrinsics_bitcode_node])
             aclasp_product = bld.path.find_or_declare(variant.fasl_name(stage='a'))
             cmp_aclasp.set_outputs(aclasp_product)
             bld.add_to_group(cmp_aclasp)
@@ -548,7 +579,7 @@ def build(bld):
             if (stage_val >= 2):
                 print("About to add compile_bclasp")
                 cmp_bclasp = compile_bclasp(env=bld.env)
-                cmp_bclasp.set_inputs([clasp_executable,aclasp_product])
+                cmp_bclasp.set_inputs([iclasp_executable,aclasp_product,intrinsics_bitcode_node])
                 bclasp_product = bld.path.find_or_declare(variant.fasl_name(stage='b'))
                 cmp_bclasp.set_outputs(bclasp_product)
                 bld.add_to_group(cmp_bclasp)
@@ -557,12 +588,23 @@ def build(bld):
                 bld.install_as('${PREFIX}/Contents/Resources/lib/%s' % variant.common_lisp_bitcode_name(stage='b'), aclasp_common_lisp_bitcode)
                 if (stage_val >= 3):
                     print("About to add compile_cclasp")
+                    # Build cclasp
                     cmp_cclasp = compile_cclasp(env=bld.env)
-                    cmp_cclasp.set_inputs([clasp_executable,bclasp_product])
+                    cxx_all_bitcode_node = bld.path.find_or_declare(variant.cxx_all_bitcode_name())
+                    cmp_cclasp.set_inputs([iclasp_executable,bclasp_product,cxx_all_bitcode_node])
                     cclasp_executable = bld.path.find_or_declare(variant.executable_name(stage='c'))
+                    cclasp_lto_o = bld.path.find_or_declare('%s.lto.o' % variant.executable_name(stage='i'))
                     cmp_cclasp.set_outputs(cclasp_executable)
                     bld.add_to_group(cmp_cclasp)
-                    bld.install_as('${PREFIX}/%s/%s' % (executable_dir, cclasp_executable.name), cclasp_executable)
+                    cclasp_dsym = bld.path.find_or_declare("%s.dSYM"%variant.executable_name(stage='c'))
+                    cclasp_dsym_files = generate_dsym_files(variant.executable_name(stage='c'),cclasp_dsym)
+                    print("cclasp_dsym_files = %s" % cclasp_dsym_files)
+                    dsymutil_cclasp = dsymutil(env=bld.env)
+                    dsymutil_cclasp.set_inputs([cclasp_executable,cclasp_lto_o])
+                    dsymutil_cclasp.set_outputs(cclasp_dsym_files)
+                    bld.add_to_group(dsymutil_cclasp)
+                    bld.install_files('${PREFIX}/%s/%s'%(executable_dir,cclasp_dsym.name),cclasp_dsym_files,relative_trick=True,cwd=cclasp_dsym)
+                    bld.install_as('${PREFIX}/%s/%s' % (executable_dir, cclasp_executable.name), cclasp_executable, chmod=Utils.O755)
                     cclasp_common_lisp_bitcode = bld.path.find_or_declare(variant.common_lisp_bitcode_name(stage='c'))
                     bld.install_as('${PREFIX}/Contents/Resources/lib/%s' % variant.common_lisp_bitcode_name(stage='c'), aclasp_common_lisp_bitcode)
                     cmp_addons = compile_addons(env=bld.env)
@@ -577,19 +619,20 @@ from waflib import TaskGen
 from waflib import Task
 
 class dsymutil(Task.Task):
-    run_str = '${DSYMUTIL} ${SRC}'
     color = 'BLUE';
-    after = [ 'cprogram', 'cxxprogram' ]
-    before = ['inst']
+    def run(self):
+        cmd = 'dsymutil %s' % self.inputs[0]
+        print("  cmd: %s" % cmd)
+        return self.exec_command(cmd)
 
-@TaskGen.feature('dsymutil')
-@TaskGen.after('apply_link')
-def add_dsymutil_task(self):
-    try:
-        link_task = self.link_task
-    except AttributeError:
-        return
-    self.create_task('dsymutil',link_task.outputs[0])
+#@TaskGen.feature('dsymutil')
+#@TaskGen.after('apply_link')
+#def add_dsymutil_task(self):
+#    try:
+#        link_task = self.link_task
+#    except AttributeError:
+#        return
+#    self.create_task('dsymutil',link_task.outputs[0])
 
 class compile_aclasp(Task.Task):
     def run(self):
@@ -645,13 +688,22 @@ class compile_addons(Task.Task):
         return 'Compile addons using... '
     
 
-class llvm_link(Task.Task):
+#class llvm_link(Task.Task):
+#    def run(self):
+#        all_inputs = StringIO()
+#        for x in self.inputs:
+#            all_inputs.write(' %s' % x)
+#        return self.exec_command('llvm-ar a %s %s' % ( self.outputs[0], all_inputs.getvalue()) )
+
+class link_bitcode(Task.Task):
+    ext_out = ['.a']
     def run(self):
         all_inputs = StringIO()
-        for x in self.inputs:
-            all_inputs.write(' %s' % x)
-        return self.exec_command('llvm-link %s -o %s' % ( all_inputs.getvalue(), self.outputs[0]) )
-
+        for f in self.inputs:
+            all_inputs.write(' %s' % f.abspath())
+        cmd = "llvm-ar q %s %s" % (self.outputs[0], all_inputs.getvalue())
+#        print("link_bitcode command: %s" % cmd )
+        return self.exec_command(cmd)
 
 class preprocess(Task.Task):
     run_str = '${CXX} -E -DSCRAPING ${ARCH_ST:ARCH} ${CXXFLAGS} ${CPPFLAGS} ${FRAMEWORKPATH_ST:FRAMEWORKPATH} ${CPPPATH_ST:INCPATHS} ${DEFINES_ST:DEFINES} ${CXX_SRC_F}${SRC} ${CXX_TGT_F}${TGT[0].abspath()}'
@@ -675,17 +727,6 @@ class generated_headers(Task.Task):
         for f in self.inputs:
             cmd.write(' %s' % f.abspath())
         return self.exec_command(cmd.getvalue())
-
-class link_bitcode(Task.Task):
-    ext_out = ['.lbc']
-    def run(self):
-        cmd = StringIO()
-        cmd.write('llvm-link ')
-        for f in self.inputs:
-            cmd.write(' %s' % f.abspath())
-        cmd.write(' -o %s' % self.outputs[0])
-        return self.exec_command(cmd.getvalue())
-
 
 # Have all 'cxx' targets have 'include' in their include paths.
 @TaskGen.feature('cxx')
@@ -728,14 +769,12 @@ def preprocess_task_generator(self):
     self.create_task('generated_headers',all_sif_files,nodes)
     self.bld.install_files('${PREFIX}/Contents/Resources/source-code/include/', nodes)
     variant = self.bld.variant_obj
-    cxx_all_bitcode_name = '%s-all-cxx.lbc' % variant.bitcode_name()
-    intrinsics_bitcode_name = '%s-intrinsics-cxx.lbc' % variant.bitcode_name()
-    cxx_all_bitcode_node = self.path.find_or_declare(cxx_all_bitcode_name)
-    intrinsics_bitcode_node = self.path.find_or_declare(intrinsics_bitcode_name)
+    cxx_all_bitcode_node = self.path.find_or_declare(variant.cxx_all_bitcode_name())
+    intrinsics_bitcode_node = self.path.find_or_declare(variant.intrinsics_bitcode_name())
     self.create_task('link_bitcode',all_o_files,cxx_all_bitcode_node)
     self.create_task('link_bitcode',[intrinsics_o],intrinsics_bitcode_node)
-    self.bld.install_files('${PREFIX}/Contents/Resources/lib/%s'%intrinsics_bitcode_name,intrinsics_bitcode_node)
-    self.bld.install_files('${PREFIX}/Contents/Resources/lib/%s'%cxx_all_bitcode_name,cxx_all_bitcode_node)
+    self.bld.install_files('${PREFIX}/Contents/Resources/lib/%s'%variant.intrinsics_bitcode_name(),intrinsics_bitcode_node)
+    self.bld.install_files('${PREFIX}/Contents/Resources/lib/%s'%variant.cxx_all_bitcode_name(),cxx_all_bitcode_node)
 
 
 def init(ctx):

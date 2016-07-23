@@ -3234,13 +3234,11 @@ Setup all of the ASTMatcher tools for the clasp-analyzer."
                (merged (if restart
                            (progn
                              (format t "Loading existing project and restarting from ~a~%" start)
-                             (load-project)
-                             )
+                             (load-project))
                            (make-project)))
                (endnum (if (null end)
                            (length all-jobs)
-                           end))
-               )
+                           end)))
           (setq *project* merged)
           (format t "Starting load/merge loop from ~a up to ~a~%" start endnum)
           (do ((proc start (1+ proc)))
@@ -3300,7 +3298,7 @@ Setup all of the ASTMatcher tools for the clasp-analyzer."
 - arguments-adjuster :: The arguments adjuster.
 * Description
 Run searches in *tools* on the source files in the compilation database."
-  (format t "serial-search-all --> current-dir: ~a~%" (core:current-dir))
+  (format t "serial-search-all --> getcwd: ~a~%" (ext:getcwd))
   (let ((tools (setup-tools compilation-tool-database))
         (all-jobs (clang-tool:source-namestrings compilation-tool-database)))
     (save-data all-jobs (merge-pathnames #P"project-all.dat" (clang-tool:main-pathname compilation-tool-database)))

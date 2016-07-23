@@ -37,19 +37,6 @@
   (string-downcase (symbol-name bundle-name)))
 
 
-#||
-(defun make-bundle-wrapper (parts bundle-name)
-  (let* ((module (create-bundle-module parts :output-pathname bundle-name))
-	 (wrapper-name (pathname-name bundle-name))
-	 (wrapper-pathname (make-pathname :name wrapper-name
-                                          :type "bc"
-                                          :defaults bundle-name)))
-    (bformat t "Writing bundle module to %s\n" (namestring wrapper-pathname))
-    (llvm-sys:write-bitcode-to-file module (core:coerce-to-filename wrapper-pathname))
-    wrapper-pathname)
-  )
-||#
-
 (defun as-shell-command (list-of-args)
   (with-output-to-string (sout)
     (princ (car list-of-args) sout)
@@ -107,7 +94,7 @@
       (ext:run-clang `(,@options
                        ,@all-object-files
 ;;;                                 "-macosx_version_min" "10.10"
-                       "-flto"
+                       "-flto=thin"
                        "-flat_namespace" 
                        "-undefined" "warning"
                        "-bundle"
@@ -121,7 +108,7 @@
       (ext:run-clang `("-v"
                        ,@options
                        ,@all-object-files
-                       "-flto"
+                       "-flto=thin"
                        "-fuse-ld=gold"
                        "-shared"
                        "-o"
